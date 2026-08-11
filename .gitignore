@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Local dev database (SQLite, local only)
+cloud_local.db
+*.db
+
+# Secrets / private keys — NEVER commit
+keys/
+test_keys/*_private.pem
+
+# Env files (secrets)
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

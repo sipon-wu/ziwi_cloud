@@ -1,0 +1,69 @@
+import uuid
+from typing import Optional
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.user import User
+from app.models.platform import PlatformUser
+from app.schemas.user import UserRegisterRequest, UserResponse
+from app.core.security import hash_password, verify_password
+
+
+class AuthService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def register(self, req: UserRegisterRequest) -> UserResponse:
+        existing = await self.db.execute(select(User).where(User.email == req.email))
+        if existing.scalar_one_or_none():
+            raise ValueError("Email already registered")
+        # 全局邮箱唯一：禁止用平台账号邮箱注册租户账号（避免跨表同邮箱碰撞）
+        platform_owner = await self.db.execute(
+            select(PlatformUser).where(PlatformUser.email == req.email)
+        )
+        if platform_owner.scalar_one_or_none():
+            raise ValueError("Email already registered")
+
+        user = User(
+            id=uuid.uuid4(),
+            email=req.email,
+            password_hash=hash_password(req.password),
+            display_name=req.display_name,
+            tenant_id=req.tenant_id,
+        )
+        self.db.add(user)
+        await self.db.commit()
+        await self.db.refresh(user)
+        return UserResponse.model_validate(user)
+
+    async def authenticate(self, email: str, password: str) -> User:
+        result = await self.db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if not user or not verify_password(password, user.password_hash):
+            raise ValueError("Invalid email or password")
+        if not user.is_active:
+            raise ValueError("Account is disabled")
+
+        # ── 租户 license 门禁：cloud 签发的有效 license 才能登录 ──
+        # 仅作用于带 tenant_id 的租户账号；平台/测试账号(tenant_id=None)不受影响。
+        if user.tenant_id:
+            from app.services.platform_service import list_license_tickets
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc)
+            tks = await list_license_tickets(self.db, tenant_id=user.tenant_id)
+            valid = [
+                t for t in tks
+                if t.status in ("approved", "completed")
+                and t.requested_expires_at
+                and t.requested_expires_at > now
+            ]
+            if not valid:
+                raise ValueError("租户许可证无效或已过期，请联系运营签发")
+
+        return user
+
+    async def get_user_by_id(self, user_id: uuid.UUID) -> Optional[User]:
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        return result.scalar_one_or_none()
