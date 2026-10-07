@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     check_interval_minutes: int = 5
     license_warn_days: int = 30
     license_critical_days: int = 7
+    # 未授权(none) 宽限期：主理人 2026-10-07 裁定 Q2——`none` 态下机器端应先宽限
+    # N 天（期间只做界面浮层提醒，不锁功能），超期才启用限制。0 = 立即限制。
+    license_grace_days: int = 30
     admin_cookie_secure: bool = False
     # Login brute-force protection
     login_max_attempts: int = 5

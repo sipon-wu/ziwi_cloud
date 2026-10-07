@@ -7,6 +7,7 @@
 """
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -172,6 +173,47 @@ def test_heartbeat_same_tenant_two_products(client):
         assert db.query(Deployment).filter_by(tenant_id="t-multi-prod").count() == 2
     finally:
         db.close()
+
+
+def test_heartbeat_none_grace_window_fields(client):
+    """Q2 裁定（2026-10-07 主理人拍板）：`none` 态下发 license_since + grace_until。
+
+    客户端据此实现"未授权宽限 N 天（期间只做界面浮层提醒、不锁功能）"。
+    """
+    r = _hb(client, "grace-tenant", "mfg", "1.0.0")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["license_status"] == "none"  # 未知租户自动播种 none
+    assert body.get("license_since"), "license_since 应下发（状态龄期起点）"
+    assert body.get("grace_until"), "none 态必须下发 grace_until（宽限截止）"
+    since = datetime.fromisoformat(body["license_since"])
+    until = datetime.fromisoformat(body["grace_until"])
+    assert until > since
+    assert (until - since).days == settings.license_grace_days
+
+
+def test_heartbeat_active_no_grace_field(client):
+    """非 none 态不下发 grace_until（无需宽限期），但仍下发 license_since 供追溯。"""
+    db = SessionLocal()
+    try:
+        db.add(
+            License(
+                tenant_id="active-tenant",
+                product="mfg",
+                status="active",
+                expires_at=datetime.now(timezone.utc) + timedelta(days=90),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    r = _hb(client, "active-tenant", "mfg", "1.0.0")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["license_status"] == "active"
+    assert body.get("license_since"), "应下发 license_since"
+    assert body.get("grace_until") is None, "非 none 态不应下发 grace_until"
+    assert body["revoked"] is False
 
 
 def test_heartbeat_same_tenant_same_product_idempotent(client):

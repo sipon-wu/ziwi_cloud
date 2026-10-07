@@ -544,6 +544,9 @@ class HeartbeatResponse(BaseModel):
     license_status: Optional[str] = None
     expires_at: Optional[str] = None   # 授权到期时间(ISO8601)，供机器端本地判停/续期（§7-A）
     revoked: bool = False              # 授权是否被吊销标记（§7-A）
+    # 授权龄期与宽限期（2026-10-07 主理人裁定 Q2：none 态宽限 30 天，期间只提醒不限制）
+    license_since: Optional[str] = None  # 本条授权记录起始时间(ISO8601)，机器端据此算状态龄期
+    grace_until: Optional[str] = None    # none 态宽限截止(ISO8601)；仅 none 态下发，超期即应启用限制
 
 
 def verify_api_key(x_api_key: Annotated[Optional[str], Header(alias="X-Api-Key")] = None) -> str:
@@ -609,6 +612,16 @@ def heartbeat_post(req: HeartbeatRequest, _key: str = Depends(verify_api_key)):
         if lic.expires_at:
             resp.expires_at = lic.expires_at.isoformat()
         resp.revoked = lic.status == "revoked"
+        # 授权龄期 + 未授权宽限期（主理人 2026-10-07 裁定 Q2）：
+        #   license_since = 本条记录起始时间（auto-seed 的 none 记录即"首次上报未建档"时刻）
+        #   grace_until   = 仅 none 态下发；机器端在此时点前只做浮层提醒，超期才限制功能
+        # 不采信客户端自报 license_status 的原则不变，仍以服务端权威态为准。
+        _since = _aware(lic.created_at)
+        resp.license_since = _since.isoformat()
+        if lic.status == "none":
+            resp.grace_until = (
+                _since + timedelta(days=settings.license_grace_days)
+            ).isoformat()
         return resp
     finally:
         db.close()
