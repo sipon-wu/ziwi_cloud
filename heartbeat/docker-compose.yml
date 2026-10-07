@@ -1,0 +1,17 @@
+services:
+  heartbeat-backend:
+    build: ./backend
+    container_name: heartbeat-backend
+    ports:
+      - "127.0.0.1:8091:8091"
+    volumes:
+      - heartbeat_data:/app/data
+    environment:
+      - HEARTBEAT_API_KEY=${HEARTBEAT_API_KEY:-changeme-dev-key}
+      - HEARTBEAT_ADMIN_PASSWORD=${HEARTBEAT_ADMIN_PASSWORD:-changeme-admin}
+      - HEARTBEAT_SESSION_SECRET=${HEARTBEAT_SESSION_SECRET:-}
+      - HEARTBEAT_ADMIN_SECURE_COOKIE=${HEARTBEAT_ADMIN_SECURE_COOKIE:-false}
+    restart: unless-stopped
+
+volumes:
+  heartbeat_data:
