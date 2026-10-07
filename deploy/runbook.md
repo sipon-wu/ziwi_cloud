@@ -1,10 +1,12 @@
-# cloud.ziwi.cn 部署 Runbook（Phase 1 · 极简 IdP）
+# cloud.ziwi.cn 部署 Runbook（运营端 · IdP + License + 心跳）
 
-> ⚠️ **执行授权声明**：本 runbook 由 **mfg 团队或获主理人授权者** 在腾讯云 CVM `193.112.163.147` 上执行。**主理人不碰云端服务器**，不执行任何 SSH / 远程命令。本文件仅为可执行步骤清单，所有操作由执行方在 CVM 上落地。
+> 📌 **归属与执行方（2026-10-07 用户拍板）**：cloud / heartbeat / mfg 三线代码与部署**全部归 codebuddy（Mac 侧）**。执行方式为 **Mac 本地改仓 → rsync 到 CVM → CVM 上 `docker compose` 重建**；CVM SSH key 仅 Mac 持有。
+> 📌 **权威源**：本仓 `sipon-wu/ziwi_cloud`（运营端）。**`ziwi_mfg/cloud/` 已归档（只读、勿部署）**——它是移交前旧记录，两份都能上线是当前最易踩的坑。
+> ⚠️ **生产部署纪律**：改配置/重启容器属生产红线，须主理人明确指令后执行；本 runbook 仅为步骤清单。
 
-> 📌 **前置条件（仓库侧必须先就绪）**：本 runbook 假定以下仓库改动已合并（见文末【附录 A：工程师任务清单】），否则第 4/5 步会失败：
+> 📌 **前置条件（仓库侧必须先就绪）**：本 runbook 假定以下改动已合并（见文末【附录 A：工程师任务清单】），否则第 4/5 步会失败：
 > 1. `docker-compose.yml` 端口已绑定到 `127.0.0.1`（backend `127.0.0.1:8000:8000`、frontend `127.0.0.1:3000:80`、db `127.0.0.1:5433:5432`）。
-> 2. `backend/app/main.py` 的 `lifespan` 已加入 `Base.metadata.create_all` 建表兜底（首启自动建表）。
+> 2. `app/main.py` 的 `lifespan` 已加入 `Base.metadata.create_all` 建表兜底（首启自动建表）。
 > 配套静态产物（`deploy/nginx/cloud.ziwi.cn.conf`）已随仓库提供。
 
 ---
@@ -27,22 +29,43 @@ docker ps --format '{{.Names}}\t{{.Ports}}'
 
 ## 2. 部署目录与代码落盘
 
-```bash
-# 2.1 建目录
-sudo mkdir -p /opt/cloud && cd /opt/cloud
+> 📌 **2026-10-07 起唯一落盘方式**：从 **`ziwi_cloud` 仓** rsync（Mac 本地 → CVM）。`/opt/cloud-idp` 与 `/opt/heartbeat` 均**无 git**，仓库是唯一版本来源，rsync 源写错就会部署错版本。
 
-# 2.2 取代码（二选一）
-#   方式 A：git pull 已包含 cloud/ 的仓库
-#   方式 B：从构建机 scp 本仓库的 cloud/ 目录
-#     scp -r <构建机>:/path/to/repo/code/cloud /opt/cloud
-#   落盘后目录应含：docker-compose.yml、.env.example、backend/、frontend/、deploy/
-ls -la /opt/cloud
+```bash
+# 2.1 目标目录（实际部署根，注意不是 /opt/cloud）
+sudo mkdir -p /opt/cloud-idp
+
+# 2.2 rsync 落盘（Mac 侧执行，SSH key 仅 Mac 持有）
+#     源 = ziwi_cloud 仓；排除本地环境与构建产物
+rsync -az --delete \
+  --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
+  --exclude 'node_modules' --exclude '*.db' --exclude '.env' \
+  --exclude 'test_keys/*_private.pem' \
+  /Users/sipon/CodeBuddy/ziwi_cloud/ \
+  root@193.112.163.147:/opt/cloud-idp/
+
+# 2.3 落盘后目录应含：app/ deploy/ frontend/ qa/ heartbeat/ docker-compose.yml .env.example
+ls -la /opt/cloud-idp
+#   ⚠️ .env 与私钥不进 rsync：.env 由 CVM 上 /opt/cloud-secrets/.env 经 compose env_file 注入，
+#      私钥在 docker 卷 cloud-idp_cloud_keys 内，两者都必须在 CVM 侧单独维护。
+```
+
+## 2bis. heartbeat 服务端落盘（A 心跳服务端，同仓 `heartbeat/`）
+
+```bash
+rsync -az --delete \
+  --exclude '.git' --exclude '__pycache__' --exclude 'data' --exclude '.env' \
+  /Users/sipon/CodeBuddy/ziwi_cloud/heartbeat/ \
+  root@193.112.163.147:/opt/heartbeat/
+
+# 落盘后 CVM 侧重建（:8091）
+ssh root@193.112.163.147 'cd /opt/heartbeat && docker compose up -d --build heartbeat-backend && curl -sS http://127.0.0.1:8091/health'
 ```
 
 ## 3. 配置 .env（生产连接串）
 
 ```bash
-cd /opt/cloud
+cd /opt/cloud-idp
 cp .env.example .env
 # 编辑 .env，关键项：
 #   CLOUD_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/cloud_idp
@@ -118,7 +141,7 @@ ls /root/.acme.sh/*.ziwi.cn_ecc/     # 应见 fullchain.cer 与 *.ziwi.cn.key
 
 ```bash
 # 7.1 拷贝本仓库提供的 server block 到 conf.d
-sudo cp /opt/cloud/deploy/nginx/cloud.ziwi.cn.conf /etc/nginx/conf.d/cloud.ziwi.cn.conf
+sudo cp /opt/cloud-idp/deploy/nginx/cloud.ziwi.cn.conf /etc/nginx/conf.d/cloud.ziwi.cn.conf
 
 # 7.2 语法检查并热加载
 sudo nginx -t && sudo systemctl reload nginx
@@ -151,7 +174,7 @@ curl -sS https://cloud.ziwi.cn/api/v1/auth/public-key
 
 ```bash
 # 9.1 RS256 私钥存于 cloud_keys 卷，定位挂载点
-MP=$(docker volume inspect cloud_cloud_keys --format '{{.Mountpoint}}')
+MP=$(docker volume inspect cloud-idp_cloud_keys --format '{{.Mountpoint}}')
 echo "keys at: $MP"
 
 # 9.2 打包加密备份到独立介质 / 密钥保险库（不进 Git、不随镜像）
@@ -171,7 +194,7 @@ sudo tar czf /secure/backup/cloud_keys_$(date +%F).tar.gz -C "$MP" .
 
 ```bash
 # 11.1 停服（保留镜像与卷，便于回退）
-cd /opt/cloud && docker compose down
+cd /opt/cloud-idp && docker compose down
 
 # 11.2 若需回退到上一镜像版本：为旧镜像打 tag 后改 compose image 重起
 #     docker compose up -d
@@ -179,6 +202,39 @@ cd /opt/cloud && docker compose down
 #     sudo rm /etc/nginx/conf.d/cloud.ziwi.cn.conf && sudo nginx -t && sudo systemctl reload nginx
 #     （此时直连容器端口 127.0.0.1:8000 / :3000 仍可用，便于排障）
 ```
+
+---
+
+## 日常更新 SOP（最常用路径 · 2026-10-07）
+
+99% 的场景只是改代码，不需要走首次部署流程：
+
+```bash
+# ① Mac 侧改仓并提交（权威源）
+cd /Users/sipon/CodeBuddy/ziwi_cloud
+git add -u && git commit -m "..." && git push
+
+# ② rsync 到 CVM（源必须是 ziwi_cloud，禁止用已归档的 ziwi_mfg/cloud）
+rsync -az --delete --exclude '.git' --exclude '.venv' --exclude '__pycache__' \
+  --exclude 'node_modules' --exclude '*.db' --exclude '.env' \
+  --exclude 'test_keys/*_private.pem' \
+  /Users/sipon/CodeBuddy/ziwi_cloud/ root@193.112.163.147:/opt/cloud-idp/
+
+# ③ CVM 侧重建 + 验证
+ssh root@193.112.163.147 'cd /opt/cloud-idp && docker compose up -d --build && docker compose ps'
+curl -sS https://cloud.ziwi.cn/health          # 期望 {"status":"ok"}
+curl -sS https://cloud.ziwi.cn/api/v1/auth/public-key   # 期望 data.keys[].kid=key_v1
+```
+
+**配置与密钥不走 rsync**（改仓库不会影响它们）：
+- `.env` / DB 口令 / 管理员口令：CVM 上 `/opt/cloud-secrets/.env`，经 compose `env_file` 注入（刻意置于同步树外）
+- RS256 私钥：docker 卷 `cloud-idp_cloud_keys`（容器内 `/app/keys`），首次启动自动生成，**禁止覆盖**
+
+**纪律**
+1. 生产部署 / 重启容器属生产红线，须主理人明确指令后执行
+2. **禁止**从 `ziwi_mfg/cloud/` 或 `ziwi_mfg/heartbeat/` rsync（已归档，只读历史）
+3. 部署后必须跑健康检查；`docker compose ps` 有容器非 healthy/Up 先查日志再继续
+4. `/opt/cloud-idp` 与 `/opt/heartbeat` 无 git，仓库是唯一版本来源；改完务必回仓提交，否则线上状态不可追溯
 
 ---
 
