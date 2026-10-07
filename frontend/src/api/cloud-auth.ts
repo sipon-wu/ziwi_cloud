@@ -98,4 +98,57 @@ export const cloudApi = {
   changePassword(old_password: string, new_password: string) {
     return http.post("/auth/change-password", { old_password, new_password });
   },
+
+  // ── 租户自助中心（需租户管理 JWT）──
+  tenantMe() {
+    return http.get("/platform/tenant/me");
+  },
+
+  tenantTickets() {
+    return http.get("/platform/tenant/tickets");
+  },
+
+  // ── License 工单（平台角色：销售/运营/超管）──
+  listTickets(params?: { status?: string; tenant_id?: string }) {
+    return http.get("/platform/tickets", { params });
+  },
+
+  createTicket(payload: {
+    tenant_id: string;
+    tenant_name?: string;
+    product: string;
+    ticket_type?: string;
+    tier?: string;
+    seats?: number;
+    deploy_mode?: string;
+    requested_expires_at?: string;
+    remarks?: string;
+  }) {
+    return http.post("/platform/tickets", payload);
+  },
+
+  approveTicket(ticket_id: string, remarks?: string) {
+    return http.post(`/platform/tickets/${ticket_id}/approve`, { remarks });
+  },
+
+  issueLicenseKey(ticket_id: string) {
+    return http.post(`/platform/tickets/${ticket_id}/license-key`);
+  },
+
+  renewLicense(payload: { tenant_id: string; product: string; new_expires_at: string; remarks?: string }) {
+    return http.post("/platform/licenses/renew", payload);
+  },
+
+  verifyLicenseKey(license_key: string) {
+    return http.post("/platform/licenses/verify", { license_key });
+  },
+
+  // ── P1：财务确认收款 / 运维实例清单 ──
+  financeConfirmTicket(ticket_id: string, remarks?: string) {
+    return http.post(`/platform/tickets/${ticket_id}/finance-confirm`, { remarks });
+  },
+
+  listInstances() {
+    return http.get("/platform/instances");
+  },
 };

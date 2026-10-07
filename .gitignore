@@ -10,9 +10,11 @@ venv/
 cloud_local.db
 *.db
 
-# Secrets / private keys — NEVER commit
+# Secrets / private keys — NEVER commit（规则不依赖目录层级，布局调整后仍生效）
 keys/
-test_keys/*_private.pem
+**/keys/
+*_private.pem
+**/*_private.pem
 
 # Env files (secrets)
 .env

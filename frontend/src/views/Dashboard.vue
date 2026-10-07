@@ -15,6 +15,9 @@
     </div>
 
     <div v-if="error" class="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg">{{ error }}</div>
+    <div v-else-if="forbidden" class="bg-gray-50 text-gray-500 text-sm px-4 py-3 rounded-lg">
+      当前角色无总览权限。相关数据与工单请在对应角色功能页查看。
+    </div>
 
     <!-- KPI 卡 -->
     <section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
@@ -169,6 +172,7 @@ import SparkLine from "../components/SparkLine.vue";
 const stats = ref<any>(null);
 const loading = ref(false);
 const error = ref("");
+const forbidden = ref(false);
 const tradeRange = ref<"day" | "hour">("day");
 
 const kpi = computed(() => stats.value?.kpi || {
@@ -228,11 +232,16 @@ function fmtTime(iso: string): string {
 async function load() {
   loading.value = true;
   error.value = "";
+  forbidden.value = false;
   try {
     const res = await cloudApi.stats();
     stats.value = res.data?.data ?? res.data;
   } catch (e: any) {
-    error.value = extractError(e);
+    if (e?.response?.status === 403) {
+      forbidden.value = true;
+    } else {
+      error.value = extractError(e);
+    }
   } finally {
     loading.value = false;
   }

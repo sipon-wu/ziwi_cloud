@@ -235,6 +235,10 @@ curl -sS https://cloud.ziwi.cn/api/v1/auth/public-key   # 期望 data.keys[].kid
 2. **禁止**从 `ziwi_mfg/cloud/` 或 `ziwi_mfg/heartbeat/` rsync（已归档，只读历史）
 3. 部署后必须跑健康检查；`docker compose ps` 有容器非 healthy/Up 先查日志再继续
 4. `/opt/cloud-idp` 与 `/opt/heartbeat` 无 git，仓库是唯一版本来源；改完务必回仓提交，否则线上状态不可追溯
+5. **⚠️ `rsync --delete` 会删除服务器上任何未入库的文件**（只保护 `--exclude` 列出的项）。2026-10-07 取证发现服务器曾有 5 个前端文件 + 3 个组件直接写在服务器上未入库，若当时执行 --delete 就会**永久丢失**运营端 License 工单流等完整功能（已回收入库）。**因此：任何改动必须先入仓，再部署；改完立刻回仓提交，绝不在服务器上直接改码。**
+   - 当前 exclude 清单：`.git`、`.venv`、`__pycache__`、`node_modules`、`*.db`、`.env`、`test_keys/*_private.pem`
+   - 这些 exclude **同时保护 `--delete`**：服务器独有的 `.env`、`*.db`、`keys/` 不会被删
+   - 未被 exclude 且未入库的文件（如陈旧 `frontend/dist/`、`.pytest_cache/`、`backend/keys/` 冗余副本）会被清理——这是期望行为：它们是构建产物/缓存/冗余，不影响运行（`cloud-frontend` 无宿主挂载，dist 已进镜像；生效私钥在 docker 卷 `cloud-idp_cloud_keys`）
 
 ---
 

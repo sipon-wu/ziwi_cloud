@@ -57,37 +57,57 @@ git push origin main
 
 ---
 
-## 四、workbuddy 团队须知
+## 四、改码与部署纪律（2026-10-07 用户拍板：cloud / heartbeat / mfg 三线全归 codebuddy）
 
-- 你们可以**在 CVM 上直接改码并 `git commit`（本地）**，但**不要试图在 CVM 上 `git push`**（无 key，会失败）。
-- 需要进 GitHub 时，把改动留在 CVM 本地 commit，由 **Mac/codebuddy 负责 rsync + push**（唯一有 GitHub key 的枢纽）。
-- 任何涉及 `keys/`、`cloud_local.db`、`.env` 的操作都不要 commit。
-- 部署生效步骤（在 CVM）：`cd /opt/cloud-idp && docker compose up -d --build backend`（需 Mac 侧协助或你方已在 CVM 有权限时）。
+- **唯一改码入口是本仓**：cloud / heartbeat 的任何改动只在本仓（Mac 侧）改 → 提交 → rsync 到 CVM → CVM 上 `docker compose` 重建。CVM SSH key 仅 Mac 持有。
+- **⛔ 禁止在 CVM 上直接改码**：2026-10-07 取证发现 `/opt/cloud-idp` 上有 **5 个前端文件 + 3 个组件是直接在服务器写的、从未入库**——包含运营端 License 工单流（`/platform/tickets`、审批、财务确认、续期、实例列表）的完整功能。这些改动会被下一次 rsync 覆盖或删除，只能靠人工取证捞回。**这就是本仓必须存在的根本原因。**
+- CVM 上的 `~/.ssh/config` 虽有 `github-mfg` 别名，但**只服务 mfg 仓**，不要用于 cloud/heartbeat；cloud/heartbeat 走 Mac 枢纽 rsync（方案 A）。
+- 任何涉及 `keys/`、`cloud-idp_cloud_keys` 卷、`cloud_local.db`、`.env` 的操作都不要 commit。
+- 部署生效步骤（CVM）：`cd /opt/cloud-idp && docker compose up -d --build backend`；**部署前必须先跑 `deploy/runbook.md` 的 dry-run 校验**。
 
 ---
 
 ## 五、仓库结构
 
+> 📌 布局与线上 `/opt/cloud-idp` **完全一致**（`backend/` 为构建上下文，compose `build: ./backend`），因此 rsync 是**纯覆盖**、无需改服务器任何配置。这是 2026-10-07 布局对齐的目的。
+
 ```
-app/
-  api/        # FastAPI 路由：auth / user / platform / public_key / deps
-  core/       # jwt_service / rsa_key_manager / security / database
-  models/     # SQLAlchemy 模型（含 InstanceHeartbeat 心跳）
-  schemas/    # Pydantic 模型
-  services/   # 业务逻辑（auth_service / user_service / platform_service）
-  main.py     # 应用入口
-  config.py
-  seed_platform.py
-tests/        # pytest
-test_keys/    # 仅公钥 key_v1_public.pem（测试夹具）
-Dockerfile
-requirements.txt
+backend/            # ← 构建上下文（compose: build ./backend）
+  app/              # FastAPI 路由：auth / user / platform / public_key / deps
+    core/           # jwt_service / rsa_key_manager / security / database
+    models/         # SQLAlchemy 模型（含 InstanceHeartbeat 心跳、LicenseTicket 工单流）
+    schemas/        # Pydantic 模型
+    services/       # 业务逻辑（auth / user / platform service）
+    main.py         # 应用入口
+    config.py
+    seed_platform.py
+  tests/            # pytest（从 backend/ 目录跑：`pytest tests/`）
+  test_keys/        # 仅公钥 key_v1_public.pem（测试夹具；私钥永不入库）
+  Dockerfile
+  requirements.txt
+frontend/          # Vue3 运营控制台（登录页、租户、工单、财务、私有实例）
+  src/views/       # Dashboard / TenantView / AdminConsole 等
+  src/components/  # AuthLayout / SparkLine / tickets/ / ops/
+heartbeat/         # A 心跳服务端（私有部署在线监控，SQLite + admin/RBAC/审计）
+deploy/            # deploy.sh、nginx conf、runbook.md（部署 SOP 在此）
+qa/                # Playwright 验证脚本（verify_cloud_console / stage2）
+docker-compose.yml
+产品规划/           # 运营平台 Stage2 规划
+质量保障纪律.md
+reset_super_admin_password.py   # 灾备：直改 platform_users 密码哈希（默认不执行）
 .gitignore
 ```
 
-## 六、私有化实例心跳（监控）
+## 六、私有化实例心跳（监控）⚠️ 两套并存，尚未归一
 
-cloud 端已实现 `POST /api/v1/heartbeat`（实例用 license_key 自证身份上报）与 `GET /api/v1/instances/heartbeats`（平台角色查看在线状态）。详见对话历史：私有化实例（如 ecms-dna）上报心跳 → cloud 验签 → 标记 online（≤600s 内有心跳）。
+| 服务端 | 端点 | 存储 | 状态 |
+|---|---|---|---|
+| **B（cloud 侧）** | `POST /api/v1/platform/heartbeat`（实例用 `license_key` RS256 JWT 自证） | PG `instance_heartbeats` | 在用（`ecms-dna`） |
+| **A（独立服务）** | `POST https://heartbeat.ziwi.cn/api/v1/heartbeat`（`X-Api-Key`） | SQLite + admin 后台 | 在用（mfg SDK、school 客户端） |
+
+- 运营端查看私有实例在线：`GET /api/v1/platform/instances/heartbeats`。
+- **A 的源码在本仓 `heartbeat/`**；其部署与 cloud 分离（`/opt/heartbeat`，端口 8091）。
+- 两套并存成因与归一方案见 `ziwi-integration-contracts/contracts/mfg接入cloud接口契约.md` §D.4 与 §0.1.1（**注意：文档中若写 `POST /api/v1/heartbeat` 指 cloud 侧，实际路径带 `/platform` 前缀**）。
 
 ---
 

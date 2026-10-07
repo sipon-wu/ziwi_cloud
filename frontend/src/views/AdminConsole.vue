@@ -121,18 +121,25 @@
         </section>
       </div>
 
+      <!-- 超管工单总控 / 运营审批台 / 销售我的工单 -->
+      <TicketList v-else-if="tab === 'tickets'" scope="all" :can-create="true" />
+      <TicketList v-else-if="tab === 'approve'" scope="all" :can-create="false" />
+      <TicketList v-else-if="tab === 'mytickets'" scope="mine" :can-create="true" />
+      <TicketFinancePanel v-else-if="tab === 'finance'" />
+      <OpsHealth v-else-if="tab === 'ops'" />
+
       <!-- 设置 -->
       <Settings v-else-if="tab === 'settings'" />
     </main>
 
     <!-- 移动端底部 Tab -->
-    <nav class="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 grid grid-cols-3 z-20">
+    <nav class="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 flex z-20">
       <button
         v-for="t in tabs"
         :key="t.key"
         @click="tab = t.key"
         :class="tab === t.key ? 'text-blue-600' : 'text-gray-500'"
-        class="py-3 text-sm font-medium flex flex-col items-center gap-0.5"
+        class="py-3 text-sm font-medium flex flex-col items-center gap-0.5 flex-1"
       >
         <span>{{ t.icon }}</span>
         <span>{{ t.label }}</span>
@@ -142,22 +149,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { cloudApi, extractError } from "../api/cloud-auth";
 import Dashboard from "./Dashboard.vue";
 import Settings from "./Settings.vue";
+import TicketList from "../components/tickets/TicketList.vue";
+import TicketFinancePanel from "../components/tickets/TicketFinancePanel.vue";
+import OpsHealth from "../components/ops/OpsHealth.vue";
 
 const router = useRouter();
 const auth = useAuthStore();
 
-type TabKey = "dashboard" | "users" | "settings";
-const tabs: { key: TabKey; label: string; icon: string }[] = [
-  { key: "dashboard", label: "总览", icon: "📊" },
-  { key: "users", label: "账号", icon: "👥" },
-  { key: "settings", label: "设置", icon: "⚙️" },
-];
+type TabKey = "dashboard" | "users" | "settings" | "tickets" | "approve" | "mytickets" | "finance" | "ops";
+// 按登录角色动态生成可见 Tab（根治“所有平台角色共用一套界面”问题）
+const tabs = computed<{ key: TabKey; label: string; icon: string }[]>(() => {
+  const r = auth.roles;
+  const isSA = auth.isSuperAdmin();
+  const isOp = r.includes("operator") || isSA;
+  const isSales = r.includes("sales");
+  const list: { key: TabKey; label: string; icon: string }[] = [
+    { key: "dashboard", label: "总览", icon: "📊" },
+  ];
+  if (isSA) list.push({ key: "users", label: "账号", icon: "👥" });
+  if (isSA) list.push({ key: "tickets", label: "工单总控", icon: "🎫" });
+  if (isOp && !isSA) list.push({ key: "approve", label: "工单审批台", icon: "✅" });
+  if (isSales) list.push({ key: "mytickets", label: "我的工单", icon: "📋" });
+  if (r.includes("finance") || isSA) list.push({ key: "finance", label: "收款确认", icon: "💰" });
+  if (r.includes("devops") || isSA) list.push({ key: "ops", label: "实例/验签", icon: "🖥️" });
+  list.push({ key: "settings", label: "设置", icon: "⚙️" });
+  return list;
+});
 const tab = ref<TabKey>("dashboard");
 
 const users = ref<any[]>([]);
