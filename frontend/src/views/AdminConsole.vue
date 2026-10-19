@@ -69,9 +69,9 @@
         </section>
 
         <section v-if="auth.isSuperAdmin()" class="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 class="text-base font-semibold text-gray-800 mb-1">密码重置（超级管理员）</h2>
+          <h2 class="text-base font-semibold text-gray-800 mb-1">按邮箱重置（超管 · 含租户账号）</h2>
           <p class="text-xs text-gray-500 mb-4">
-            按邮箱重置任意账号密码：先匹配平台账号，未命中再匹配租户账号。cloud 无邮件找回，这是唯一的在线找回入口。
+            下方列表只含平台账号，可直接在行内点「重置密码」；租户账号（如学校/工厂的登录邮箱）不在列表里，用这里按邮箱重置。cloud 无邮件找回，这是唯一的在线找回入口。
           </p>
           <div v-if="resetErr" class="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg mb-3">{{ resetErr }}</div>
           <div v-if="resetOk" class="bg-green-50 text-green-700 text-sm px-4 py-2 rounded-lg mb-3">{{ resetOk }}</div>
@@ -102,6 +102,7 @@
             <h2 class="text-base font-semibold text-gray-800">平台账号列表</h2>
             <button @click="loadUsers" class="text-sm text-blue-600 hover:underline">刷新</button>
           </div>
+          <div v-if="rowOk" class="bg-green-50 text-green-700 text-sm px-4 py-2 rounded-lg mb-3">{{ rowOk }}</div>
           <!-- 桌面：表格 -->
           <table class="w-full text-sm hidden sm:table">
             <thead>
@@ -120,9 +121,12 @@
                 <td class="py-2"><span class="px-2 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">{{ ROLE_LABELS[u.role] || u.role }}</span></td>
                 <td class="py-2"><span :class="u.is_active ? 'text-green-600' : 'text-gray-400'">{{ u.is_active ? '启用' : '停用' }}</span></td>
                 <td class="py-2">
-                  <button v-if="auth.isSuperAdmin()" @click="toggleActive(u)" :disabled="togglingId === u.id" class="text-sm text-blue-600 hover:underline disabled:opacity-50">
-                    {{ u.is_active ? '停用' : '启用' }}
-                  </button>
+                  <div class="flex items-center gap-3">
+                    <button v-if="auth.isSuperAdmin()" @click="openResetFor(u)" class="text-sm text-blue-600 hover:underline">重置密码</button>
+                    <button v-if="auth.isSuperAdmin()" @click="toggleActive(u)" :disabled="togglingId === u.id" class="text-sm text-blue-600 hover:underline disabled:opacity-50">
+                      {{ u.is_active ? '停用' : '启用' }}
+                    </button>
+                  </div>
                 </td>
               </tr>
               <tr v-if="!users.length">
@@ -141,9 +145,12 @@
                   <span :class="u.is_active ? 'text-green-600 ml-2' : 'text-gray-400 ml-2'">{{ u.is_active ? '启用' : '停用' }}</span>
                 </p>
               </div>
-              <button v-if="auth.isSuperAdmin()" @click="toggleActive(u)" :disabled="togglingId === u.id" class="text-sm text-blue-600 hover:underline disabled:opacity-50 shrink-0 ml-2">
-                {{ u.is_active ? '停用' : '启用' }}
-              </button>
+              <div class="flex items-center gap-3 shrink-0 ml-2">
+                <button v-if="auth.isSuperAdmin()" @click="openResetFor(u)" class="text-sm text-blue-600 hover:underline">重置密码</button>
+                <button v-if="auth.isSuperAdmin()" @click="toggleActive(u)" :disabled="togglingId === u.id" class="text-sm text-blue-600 hover:underline disabled:opacity-50">
+                  {{ u.is_active ? '停用' : '启用' }}
+                </button>
+              </div>
             </li>
             <li v-if="!users.length" class="py-4 text-center text-gray-400 text-sm">暂无账号</li>
           </ul>
@@ -174,6 +181,34 @@
         <span>{{ t.label }}</span>
       </button>
     </nav>
+
+    <!-- 列表行内「重置密码」对话框 -->
+    <div v-if="resetTarget" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4" @click.self="closeResetFor">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+        <h3 class="text-base font-semibold text-gray-800 mb-1">重置密码</h3>
+        <p class="text-xs text-gray-500 mb-4">
+          目标：<span class="text-gray-700">{{ resetTarget.display_name }}（{{ resetTarget.email }} · {{ ROLE_LABELS[resetTarget.role] || resetTarget.role }}）</span>
+        </p>
+        <div v-if="rowErr" class="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg mb-3">{{ rowErr }}</div>
+        <form @submit.prevent="submitResetFor" class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">新密码（≥8 位）</label>
+            <input v-model="rowPwd.new_password" type="password" required minlength="8" autocomplete="new-password" class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">确认新密码</label>
+            <input v-model="rowPwd.confirm" type="password" required minlength="8" autocomplete="new-password" class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+          <div class="flex items-center justify-end gap-3 pt-1">
+            <button type="button" @click="closeResetFor" class="text-sm text-gray-500 hover:text-gray-800">取消</button>
+            <button type="submit" :disabled="rowSaving" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+              {{ rowSaving ? '重置中...' : '确认重置' }}
+            </button>
+          </div>
+        </form>
+        <p class="text-xs text-gray-400 mt-3">重置后该账号已签发的登录态最长 30 分钟后失效。</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -224,6 +259,13 @@ const resetForm = ref({ email: "", new_password: "", confirm: "" });
 const resetErr = ref("");
 const resetOk = ref("");
 const resetting = ref(false);
+
+// 列表行内重置（对平台账号直接操作）
+const resetTarget = ref<any>(null);
+const rowPwd = ref({ new_password: "", confirm: "" });
+const rowErr = ref("");
+const rowOk = ref("");
+const rowSaving = ref(false);
 
 const ROLE_LABELS: Record<string, string> = {
   super_admin: "超级管理员",
@@ -292,6 +334,43 @@ async function submitReset() {
     resetErr.value = extractError(e);
   } finally {
     resetting.value = false;
+  }
+}
+
+function openResetFor(u: any) {
+  resetTarget.value = u;
+  rowPwd.value = { new_password: "", confirm: "" };
+  rowErr.value = "";
+  rowOk.value = "";
+}
+
+function closeResetFor() {
+  resetTarget.value = null;
+  rowErr.value = "";
+}
+
+async function submitResetFor() {
+  if (!resetTarget.value) return;
+  rowErr.value = "";
+  const label = resetTarget.value.display_name + "（" + resetTarget.value.email + "）";
+  if (rowPwd.value.new_password.length < 8) {
+    rowErr.value = "新密码至少 8 位";
+    return;
+  }
+  if (rowPwd.value.new_password !== rowPwd.value.confirm) {
+    rowErr.value = "两次输入的新密码不一致";
+    return;
+  }
+  rowSaving.value = true;
+  try {
+    await cloudApi.resetPassword(resetTarget.value.email, rowPwd.value.new_password);
+    closeResetFor();
+    rowOk.value = `已重置 ${label} 的密码`;
+    await loadUsers();
+  } catch (e: any) {
+    rowErr.value = extractError(e);
+  } finally {
+    rowSaving.value = false;
   }
 }
 
