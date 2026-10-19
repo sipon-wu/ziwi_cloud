@@ -99,6 +99,11 @@ export const cloudApi = {
     return http.post("/auth/change-password", { old_password, new_password });
   },
 
+  // ── 超管重置任意账号密码（按邮箱：平台账号优先，其次租户账号）──
+  resetPassword(email: string, new_password: string) {
+    return http.post("/platform/password-reset", { email, new_password });
+  },
+
   // ── 租户自助中心（需租户管理 JWT）──
   tenantMe() {
     return http.get("/platform/tenant/me");

@@ -1,5 +1,6 @@
 """Platform management API: accounts, licenses, tickets."""
 
+import logging
 from typing import Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from app.core.database import get_db
 from app.models.platform import PlatformRole
 from app.schemas import (
     PlatformUserCreate, PlatformUserUpdate, PlatformUserResponse,
+    PlatformPasswordReset, PasswordResetResponse,
     PlatformLoginRequest, PlatformLoginResponse,
     BusinessLineCreate, BusinessLineResponse,
     LicenseTicketCreate, LicenseTicketApprove, LicenseTicketResponse,
@@ -19,7 +21,8 @@ from app.schemas import (
 )
 from app.services.platform_service import (
     create_platform_user, get_platform_user, get_platform_user_by_email,
-    list_platform_users, update_platform_user, authenticate_platform_user,
+    list_platform_users, update_platform_user, reset_password_by_email,
+    authenticate_platform_user,
     generate_platform_token,
     create_business_line, list_business_lines,
     create_license_ticket, list_license_tickets, approve_license_ticket,
@@ -31,6 +34,8 @@ from app.services.platform_service import (
 from app.api.deps import get_current_platform_user
 
 router = APIRouter(prefix="/api/v1/platform", tags=["platform"])
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -142,6 +147,35 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="账号不存在")
     return PlatformUserResponse(**user.to_dict())
+
+
+@router.post("/password-reset", response_model=PasswordResetResponse)
+async def reset_password(
+    body: PlatformPasswordReset,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_platform_user),
+):
+    """重置任意账号密码（仅超级管理员）。
+
+    按邮箱定位：先匹配平台账号（platform_users），未命中再匹配租户账号（users）。
+    这是超管协助他人找回密码的唯一在线入口（cloud 无 forget-password / SMTP）。
+    注意：只改 password_hash，目标账号已签发的 access token 自然过期（≤30min）才失效。
+    """
+    if current_user.role != PlatformRole.SUPER_ADMIN.value:
+        raise HTTPException(status_code=403, detail="仅超级管理员可重置密码")
+    target = await reset_password_by_email(db, body.email, body.new_password)
+    if not target:
+        raise HTTPException(status_code=404, detail="账号不存在（平台账号与租户账号均未命中该邮箱）")
+    logger.warning(
+        "PASSWORD_RESET by=%s role=%s target=%s type=%s tenant=%s",
+        current_user.email, current_user.role, target["email"],
+        target["account_type"], target.get("tenant_id"),
+    )
+    return PasswordResetResponse(
+        account_type=target["account_type"],
+        email=target["email"],
+        display_name=target["display_name"],
+    )
 
 
 # ============================================================

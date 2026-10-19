@@ -282,6 +282,53 @@ async def update_platform_user(
     return user
 
 
+async def reset_password_by_email(
+    db: AsyncSession, email: str, new_password: str
+) -> Optional[dict]:
+    """超管重置指定邮箱账号的密码：先匹配平台账号，再匹配租户账号。
+
+    返回 {"account_type", "id", "email", "display_name", "tenant_id"?}；两表均未命中返回 None。
+    注意：只改 password_hash，不撤销已签发的 access token（自然过期 ≤30min）。
+    """
+    email_norm = (email or "").strip().lower()
+    if not email_norm:
+        return None
+
+    plat = (
+        await db.execute(
+            select(PlatformUser).where(func.lower(PlatformUser.email) == email_norm)
+        )
+    ).scalars().first()
+    if plat:
+        plat.password_hash = hash_password(new_password)
+        plat.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {
+            "account_type": "platform",
+            "id": str(plat.id),
+            "email": plat.email,
+            "display_name": plat.display_name,
+            "tenant_id": None,
+        }
+
+    tenant_user = (
+        await db.execute(select(User).where(func.lower(User.email) == email_norm))
+    ).scalars().first()
+    if tenant_user:
+        tenant_user.password_hash = hash_password(new_password)
+        tenant_user.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {
+            "account_type": "tenant",
+            "id": str(tenant_user.id),
+            "email": tenant_user.email,
+            "display_name": tenant_user.display_name,
+            "tenant_id": tenant_user.tenant_id,
+        }
+
+    return None
+
+
 async def authenticate_platform_user(
     db: AsyncSession, email: str, password: str
 ) -> Optional[PlatformUser]:

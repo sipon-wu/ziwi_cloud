@@ -44,6 +44,18 @@ class PlatformUserResponse(BaseModel):
     updated_at: Optional[str] = None
 
 
+class PlatformPasswordReset(BaseModel):
+    """超管重置任意账号密码（按邮箱定位：平台账号优先，其次租户账号）"""
+    email: str = Field(..., max_length=255)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class PasswordResetResponse(BaseModel):
+    account_type: str  # platform / tenant
+    email: str
+    display_name: str
+
+
 # ============================================================
 # Business Line
 # ============================================================

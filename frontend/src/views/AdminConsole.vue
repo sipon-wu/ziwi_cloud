@@ -68,6 +68,35 @@
           仅超级管理员可分配平台账号。
         </section>
 
+        <section v-if="auth.isSuperAdmin()" class="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 class="text-base font-semibold text-gray-800 mb-1">密码重置（超级管理员）</h2>
+          <p class="text-xs text-gray-500 mb-4">
+            按邮箱重置任意账号密码：先匹配平台账号，未命中再匹配租户账号。cloud 无邮件找回，这是唯一的在线找回入口。
+          </p>
+          <div v-if="resetErr" class="bg-red-50 text-red-600 text-sm px-4 py-2 rounded-lg mb-3">{{ resetErr }}</div>
+          <div v-if="resetOk" class="bg-green-50 text-green-700 text-sm px-4 py-2 rounded-lg mb-3">{{ resetOk }}</div>
+          <form @submit.prevent="submitReset" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">目标邮箱</label>
+              <input v-model="resetForm.email" type="email" required placeholder="user@example.com" class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">新密码（≥8 位）</label>
+              <input v-model="resetForm.new_password" type="password" required minlength="8" class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">确认新密码</label>
+              <input v-model="resetForm.confirm" type="password" required minlength="8" class="w-full px-3 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+            <div class="col-span-1 sm:col-span-3 flex items-center gap-3 flex-wrap">
+              <button type="submit" :disabled="resetting" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2 rounded-lg disabled:opacity-50">
+                {{ resetting ? '重置中...' : '重置密码' }}
+              </button>
+              <span class="text-xs text-gray-400">重置后旧登录态最多 30 分钟后失效，请提醒对方用新密码重新登录。</span>
+            </div>
+          </form>
+        </section>
+
         <section class="bg-white rounded-xl border border-gray-200 p-6">
           <div class="flex items-center justify-between mb-4">
             <h2 class="text-base font-semibold text-gray-800">平台账号列表</h2>
@@ -190,6 +219,12 @@ const formOk = ref("");
 const creating = ref(false);
 const togglingId = ref("");
 
+// 超管密码重置
+const resetForm = ref({ email: "", new_password: "", confirm: "" });
+const resetErr = ref("");
+const resetOk = ref("");
+const resetting = ref(false);
+
 const ROLE_LABELS: Record<string, string> = {
   super_admin: "超级管理员",
   operator: "运营",
@@ -233,6 +268,30 @@ async function toggleActive(u: any) {
     formError.value = extractError(e);
   } finally {
     togglingId.value = "";
+  }
+}
+
+async function submitReset() {
+  resetErr.value = "";
+  resetOk.value = "";
+  if (resetForm.value.new_password.length < 8) {
+    resetErr.value = "新密码至少 8 位";
+    return;
+  }
+  if (resetForm.value.new_password !== resetForm.value.confirm) {
+    resetErr.value = "两次输入的新密码不一致";
+    return;
+  }
+  resetting.value = true;
+  try {
+    const res = await cloudApi.resetPassword(resetForm.value.email.trim(), resetForm.value.new_password);
+    const d = res.data?.data ?? res.data;
+    resetOk.value = `已重置 ${d.email}（${d.account_type === "platform" ? "平台账号" : "租户账号"} · ${d.display_name}）`;
+    resetForm.value = { email: "", new_password: "", confirm: "" };
+  } catch (e: any) {
+    resetErr.value = extractError(e);
+  } finally {
+    resetting.value = false;
   }
 }
 
