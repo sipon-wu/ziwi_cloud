@@ -109,7 +109,7 @@ export const cloudApi = {
   },
 
   // ── License 工单（平台角色：销售/运营/超管）──
-  listTickets(params?: { status?: string; tenant_id?: string }) {
+  listTickets(params?: { status_filter?: string; tenant_id?: string }) {
     return http.get("/platform/tickets", { params });
   },
 
@@ -121,6 +121,7 @@ export const cloudApi = {
     tier?: string;
     seats?: number;
     deploy_mode?: string;
+    domain?: string;
     requested_expires_at?: string;
     remarks?: string;
   }) {
@@ -131,8 +132,17 @@ export const cloudApi = {
     return http.post(`/platform/tickets/${ticket_id}/approve`, { remarks });
   },
 
+  rejectTicket(ticket_id: string, remarks: string) {
+    return http.post(`/platform/tickets/${ticket_id}/reject`, { remarks });
+  },
+
   issueLicenseKey(ticket_id: string) {
     return http.post(`/platform/tickets/${ticket_id}/license-key`);
+  },
+
+  // 只读取回已签发的 key（不会重签）
+  getLicenseKey(ticket_id: string) {
+    return http.get(`/platform/tickets/${ticket_id}/license-key`);
   },
 
   renewLicense(payload: { tenant_id: string; product: string; new_expires_at: string; remarks?: string }) {

@@ -23,6 +23,7 @@ from app.services.platform_service import (
     generate_platform_token,
     create_business_line, list_business_lines,
     create_license_ticket, list_license_tickets, approve_license_ticket,
+    reject_license_ticket, get_license_ticket,
     renew_license, issue_license_key,
     finance_confirm_ticket, list_private_instances,
     get_platform_stats, record_heartbeat, get_heartbeat_map,
@@ -226,10 +227,59 @@ async def approve_ticket(
     """审批通过工单（运营）"""
     if current_user.role not in [PlatformRole.OPERATOR.value, PlatformRole.SUPER_ADMIN.value]:
         raise HTTPException(status_code=403, detail="仅运营可审批")
-    ticket = await approve_license_ticket(db, ticket_id, str(current_user.id), body.remarks)
+    try:
+        ticket = await approve_license_ticket(db, ticket_id, str(current_user.id), body.remarks)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not ticket:
         raise HTTPException(status_code=404, detail="工单不存在")
     return LicenseTicketResponse(**ticket.to_dict())
+
+
+@router.post("/tickets/{ticket_id}/reject", response_model=LicenseTicketResponse)
+async def reject_ticket(
+    ticket_id: str,
+    body: LicenseTicketApprove = LicenseTicketApprove(),
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_platform_user),
+):
+    """驳回工单（运营/超管），必须填写原因。"""
+    if current_user.role not in [PlatformRole.OPERATOR.value, PlatformRole.SUPER_ADMIN.value]:
+        raise HTTPException(status_code=403, detail="仅运营可驳回")
+    try:
+        ticket = await reject_license_ticket(db, ticket_id, str(current_user.id), body.remarks)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    return LicenseTicketResponse(**ticket.to_dict())
+
+
+@router.get("/tickets/{ticket_id}/license-key", response_model=LicenseKeyResponse)
+async def get_ticket_license_key(
+    ticket_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_platform_user),
+):
+    """读取已签发的 license key（运营/超管）。
+
+    只读、可重复调用，**不会重新签名**；用于页面关闭后再次取回凭据。
+    """
+    if current_user.role not in [PlatformRole.OPERATOR.value, PlatformRole.SUPER_ADMIN.value]:
+        raise HTTPException(status_code=403, detail="仅运营可查看 license key")
+    ticket = await get_license_ticket(db, ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    if not ticket.license_key:
+        raise HTTPException(status_code=404, detail="该工单尚未签发 license key")
+    return LicenseKeyResponse(
+        ticket_id=str(ticket.id),
+        ticket_no=ticket.ticket_no,
+        tenant_id=ticket.tenant_id,
+        license_key=ticket.license_key,
+        expires_at=ticket.requested_expires_at.isoformat() if ticket.requested_expires_at else None,
+        issued_at=ticket.license_key_issued_at.isoformat() if ticket.license_key_issued_at else None,
+    )
 
 
 # ============================================================

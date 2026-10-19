@@ -344,6 +344,23 @@ def _generate_ticket_no() -> str:
     return f"LIC-{now.strftime('%Y%m')}-{suffix}"
 
 
+def _normalize_domain(value: Optional[str]) -> Optional[str]:
+    """归一化域名：去协议 / 路径 / 末尾点，转小写；空值返回 None。
+
+    离线证 domain 校验是字符串精确比较，写入前必须归一，避免
+    `https://x.cn/path` 这类脏值导致客户侧 DOMAIN_MISMATCH。
+    """
+    if not value:
+        return None
+    d = value.strip().lower()
+    if "://" in d:
+        d = d.split("://", 1)[1]
+    d = d.split("/", 1)[0]
+    if d.endswith("."):
+        d = d[:-1]
+    return d or None
+
+
 def _ensure_aware(dt: Optional[datetime]) -> Optional[datetime]:
     """SQLite 存回的 datetime 为 naive，统一补 UTC tz 以便安全比较。"""
     if dt is None:
@@ -367,6 +384,7 @@ async def create_license_ticket(db: AsyncSession, data: dict) -> LicenseTicket:
         tier=data.get("tier"),
         seats=data.get("seats"),
         deploy_mode=data.get("deploy_mode", "saas"),
+        domain=_normalize_domain(data.get("domain")),
         remarks=data.get("remarks"),
         applicant_id=(
             uuid.UUID(data["applicant_id"]) if data.get("applicant_id") else None
@@ -409,11 +427,37 @@ async def approve_license_ticket(
     if not ticket:
         return None
     now = datetime.now(timezone.utc)
+    if ticket.status not in ("paid", "approved"):
+        label = {
+            "pending": "待支付（需先财务确认收款）",
+            "rejected": "已驳回",
+            "completed": "已完成",
+        }.get(ticket.status, ticket.status)
+        raise ValueError(f"工单当前为「{label}」，不可审批")
     ticket.status = "approved"
     ticket.approver_id = uuid.UUID(approver_id)
     ticket.approved_at = now
     if remarks:
         ticket.remarks = (ticket.remarks or "") + f"\n[审批] {remarks}"
+    await db.commit()
+    await db.refresh(ticket)
+    return ticket
+
+
+async def reject_license_ticket(
+    db: AsyncSession, ticket_id: str, operator_id: str, remarks: Optional[str] = None
+) -> Optional[LicenseTicket]:
+    """驳回工单（pending/paid/approved → rejected）；已完成/已驳回不可再驳，必填原因。"""
+    ticket = await get_license_ticket(db, ticket_id)
+    if not ticket:
+        return None
+    if ticket.status in ("completed", "rejected"):
+        raise ValueError(f"工单当前为「{ticket.status}」，不可驳回")
+    if not remarks or not remarks.strip():
+        raise ValueError("驳回必须填写原因")
+    ticket.status = "rejected"
+    ticket.approver_id = uuid.UUID(operator_id)
+    ticket.remarks = (ticket.remarks or "") + f"\n[驳回] {remarks.strip()}"
     await db.commit()
     await db.refresh(ticket)
     return ticket
@@ -476,6 +520,7 @@ async def renew_license(
         tier=base.tier,
         seats=base.seats,
         deploy_mode=base.deploy_mode,
+        domain=base.domain,
         status="approved",
         applicant_id=op_uuid,
         approver_id=op_uuid,
@@ -503,6 +548,11 @@ async def issue_license_key(db: AsyncSession, ticket_id: str) -> Optional[Licens
     if exp <= now:
         raise ValueError("license 已过期，请先续期再签发")
 
+    # 幂等：已签发的工单不重复签名。
+    # 重复签名会用当前 claims 覆盖旧证，静默丢失 domain 等非工单字段（2026-10-19 xgn 事故）。
+    if ticket.license_key:
+        return ticket
+
     from app.main import jwt_service  # 延迟导入避免循环依赖
     claims = {
         "license_id": str(ticket.id),
@@ -514,6 +564,8 @@ async def issue_license_key(db: AsyncSession, ticket_id: str) -> Optional[Licens
         "seats": ticket.seats,
         "deploy_mode": ticket.deploy_mode,
     }
+    if ticket.domain:
+        claims["domain"] = ticket.domain
     ticket.license_key = jwt_service.create_license_key(claims, expires_at=exp)
     ticket.license_key_issued_at = now
     await db.commit()

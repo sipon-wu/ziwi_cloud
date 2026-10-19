@@ -99,6 +99,7 @@ class LicenseTicketCreate(BaseModel):
     tier: Optional[str] = Field(default=None, max_length=32)       # basic / pro / flagship
     seats: Optional[int] = Field(default=None, ge=1)               # 席位/学校数上限
     deploy_mode: str = Field(default="saas", pattern="^(saas|private)$")
+    domain: Optional[str] = Field(default=None, max_length=255)  # 离线证域名绑定；空=不绑定
     remarks: Optional[str] = None
 
 
@@ -148,6 +149,7 @@ class LicenseTicketResponse(BaseModel):
     tier: Optional[str] = None
     seats: Optional[int] = None
     deploy_mode: str = "saas"
+    domain: Optional[str] = None
     has_license_key: bool = False
     license_key_issued_at: Optional[str] = None
     status: str

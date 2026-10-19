@@ -125,6 +125,9 @@ class LicenseTicket(Base):
     seats: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)     # 席位/学校数上限
     deploy_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="saas")  # saas / private
 
+    # 域名绑定（离线证 domain claim 的唯一来源）；None = 不写 domain，即不做域名绑定
+    domain: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
     # 私有化离线验签 license key（最近一次签发的 RS256 签名串，实例本地用 cloud 公钥验签）
     license_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     license_key_issued_at: Mapped[Optional[datetime]] = mapped_column(
@@ -176,6 +179,7 @@ class LicenseTicket(Base):
             "tier": self.tier,
             "seats": self.seats,
             "deploy_mode": self.deploy_mode,
+            "domain": self.domain,
             "has_license_key": bool(self.license_key),
             "license_key_issued_at": self.license_key_issued_at.isoformat() if self.license_key_issued_at else None,
             "status": self.status,

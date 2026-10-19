@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
                 "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS deploy_mode VARCHAR(16) NOT NULL DEFAULT 'saas'",
                 "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS license_key TEXT",
                 "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS license_key_issued_at TIMESTAMPTZ",
+                "ALTER TABLE license_tickets ADD COLUMN IF NOT EXISTS domain VARCHAR(255)",
             ):
                 await conn.execute(text(ddl))
     yield
